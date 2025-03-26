@@ -1,0 +1,11 @@
+[project]
+name = "student-grades-calculator"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "fpdf>=1.7.2",
+    "matplotlib>=3.9.4",
+    "streamlit>=1.44.0",
+]
