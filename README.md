@@ -39,8 +39,8 @@ The **Student Report Card Generator** is a user-friendly and interactive web app
 
 ### 1️⃣ Clone the Repository
 ```bash
-git clone https://github.com/your-username/student-report-card.git
-cd student-report-card
+git clone https://github.com/muzaffar401/Student_Report_Card_App.git
+cd Student_Report_Card_App
 ```
 
 ### 2️⃣ Install Dependencies
@@ -50,7 +50,7 @@ pip install -r requirements.txt
 
 ### 3️⃣ Run the Application
 ```bash
-streamlit run app.py
+streamlit run main.py
 ```
 
 ## How to Use
@@ -78,7 +78,7 @@ pip install streamlit pandas matplotlib fpdf numpy
 - **FPDF** - PDF Report Generation
 
 ## Screenshots
-🔜 *Coming Soon*
+![Screenshot 2025-03-27 014443](https://github.com/user-attachments/assets/27f460c4-2a00-42d9-8332-440f6eb8b7e7)
 
 ## Contributions
 Contributions are welcome! Feel free to submit **issues**, **feature requests**, or **pull requests** to improve this project.
