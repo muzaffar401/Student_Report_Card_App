@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from datetime import datetime
 import base64
-import json
+import sqlite3
 import os
 from fpdf import FPDF
 import tempfile
@@ -19,17 +19,169 @@ GRADE_SCALE = {
     "F": (0, 59, "Failed. Please work harder.", "#FF1744"),
 }
 
+# Database Setup
+def init_db():
+    conn = sqlite3.connect('report_cards.db')
+    c = conn.cursor()
+    
+    # Create reports table if it doesn't exist
+    c.execute('''CREATE TABLE IF NOT EXISTS reports
+                 (id TEXT PRIMARY KEY,
+                  student_name TEXT,
+                  class_section TEXT,
+                  date TEXT,
+                  total_marks INTEGER,
+                  average REAL,
+                  grade TEXT,
+                  remarks TEXT,
+                  grade_color TEXT)''')
+    
+    # Create subjects table if it doesn't exist
+    c.execute('''CREATE TABLE IF NOT EXISTS subjects
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  report_id TEXT,
+                  subject_name TEXT,
+                  score INTEGER,
+                  FOREIGN KEY(report_id) REFERENCES reports(id))''')
+    
+    conn.commit()
+    conn.close()
+
+def save_report(report_data):
+    conn = sqlite3.connect('report_cards.db')
+    c = conn.cursor()
+    
+    # Insert report data
+    c.execute('''INSERT INTO reports 
+                 (id, student_name, class_section, date, total_marks, average, grade, remarks, grade_color)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+              (report_data['id'],
+               report_data['student_name'],
+               report_data['class_section'],
+               report_data['date'],
+               report_data['total_marks'],
+               report_data['average'],
+               report_data['grade'],
+               report_data['remarks'],
+               report_data['grade_color']))
+    
+    # Insert subjects data
+    for subject, score in report_data['subjects'].items():
+        c.execute('''INSERT INTO subjects (report_id, subject_name, score)
+                     VALUES (?, ?, ?)''',
+                  (report_data['id'], subject, score))
+    
+    conn.commit()
+    conn.close()
+
+def load_previous_reports():
+    conn = sqlite3.connect('report_cards.db')
+    c = conn.cursor()
+    
+    # Get all reports
+    c.execute('''SELECT * FROM reports ORDER BY date DESC''')
+    reports_data = c.fetchall()
+    
+    reports = []
+    for report in reports_data:
+        # Get subjects for this report
+        c.execute('''SELECT subject_name, score FROM subjects 
+                     WHERE report_id = ?''', (report[0],))
+        subjects_data = c.fetchall()
+        
+        # Convert to dictionary format
+        subjects = {subject: score for subject, score in subjects_data}
+        
+        reports.append({
+            'id': report[0],
+            'student_name': report[1],
+            'class_section': report[2],
+            'date': report[3],
+            'total_marks': report[4],
+            'average': report[5],
+            'grade': report[6],
+            'remarks': report[7],
+            'grade_color': report[8],
+            'subjects': subjects
+        })
+    
+    conn.close()
+    return reports
+
+def delete_report(report_id):
+    conn = sqlite3.connect('report_cards.db')
+    c = conn.cursor()
+    
+    try:
+        # Delete subjects first (foreign key constraint)
+        c.execute('''DELETE FROM subjects WHERE report_id = ?''', (report_id,))
+        # Then delete the report
+        c.execute('''DELETE FROM reports WHERE id = ?''', (report_id,))
+        conn.commit()
+        success = True
+    except:
+        success = False
+    finally:
+        conn.close()
+    
+    return success
+
+def update_report(report_data):
+    conn = sqlite3.connect('report_cards.db')
+    c = conn.cursor()
+    
+    try:
+        # Update report data
+        c.execute('''UPDATE reports 
+                     SET student_name = ?,
+                         class_section = ?,
+                         date = ?,
+                         total_marks = ?,
+                         average = ?,
+                         grade = ?,
+                         remarks = ?,
+                         grade_color = ?
+                     WHERE id = ?''',
+                  (report_data['student_name'],
+                   report_data['class_section'],
+                   report_data['date'],
+                   report_data['total_marks'],
+                   report_data['average'],
+                   report_data['grade'],
+                   report_data['remarks'],
+                   report_data['grade_color'],
+                   report_data['id']))
+        
+        # Delete existing subjects
+        c.execute('''DELETE FROM subjects WHERE report_id = ?''', (report_data['id'],))
+        
+        # Insert new subjects
+        for subject, score in report_data['subjects'].items():
+            c.execute('''INSERT INTO subjects (report_id, subject_name, score)
+                         VALUES (?, ?, ?)''',
+                      (report_data['id'], subject, score))
+        
+        conn.commit()
+        success = True
+    except Exception as e:
+        print(f"Error updating report: {e}")
+        success = False
+    finally:
+        conn.close()
+    
+    return success
+
+# Initialize database
+init_db()
 
 def calculate_average(scores):
     return sum(scores) / len(scores) if scores else 0
-
 
 def assign_grade(average):
     for grade, (low, high, remark, color) in GRADE_SCALE.items():
         if low <= average <= high:
             return grade, remark, color
     return "F", "Invalid score", "#FF1744"
-
 
 def generate_bar_chart(subject_scores):
     plt.style.use('dark_background')
@@ -70,7 +222,6 @@ def generate_bar_chart(subject_scores):
     plt.xticks(rotation=45, ha="right")
     plt.tight_layout()
     return fig
-
 
 def generate_pie_chart(subject_scores):
     plt.style.use('dark_background')
@@ -115,7 +266,6 @@ def generate_pie_chart(subject_scores):
     fig.patch.set_facecolor('#121212')
     return fig
 
-
 def get_table_download_link(df, filename="report_card.csv"):
     csv = df.to_csv(index=False)
     b64 = base64.b64encode(csv.encode()).decode()
@@ -126,55 +276,6 @@ def get_table_download_link(df, filename="report_card.csv"):
     </a>
     '''
     return href
-
-
-def save_report(report_data):
-    if not os.path.exists("reports"):
-        os.makedirs("reports")
-
-    # Generate a unique ID if not present
-    if "id" not in report_data:
-        report_data["id"] = str(uuid.uuid4())
-    
-    filename = f"reports/{report_data['id']}.json"
-    with open(filename, "w") as f:
-        json.dump(report_data, f)
-    return filename
-
-
-def load_previous_reports():
-    if not os.path.exists("reports"):
-        return []
-
-    reports = []
-    for file in os.listdir("reports"):
-        if file.endswith(".json"):
-            try:
-                with open(f"reports/{file}", "r") as f:
-                    report = json.load(f)
-                    # Ensure all required fields are present
-                    if "id" not in report:
-                        report["id"] = os.path.splitext(file)[0]
-                    if "total_marks" not in report:
-                        report["total_marks"] = sum(report["subjects"].values())
-                    if "class_section" not in report:
-                        report["class_section"] = "N/A"
-                    reports.append(report)
-            except:
-                continue
-    return sorted(reports, key=lambda x: x["date"], reverse=True)
-
-
-def delete_report(report_id):
-    try:
-        file_path = f"reports/{report_id}.json"
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            return True
-    except:
-        return False
-    return False
-
 
 def generate_pdf_report(report_data):
     pdf = FPDF()
@@ -224,7 +325,6 @@ def generate_pdf_report(report_data):
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     pdf.output(temp_file.name)
     return temp_file.name
-
 
 def display_report_card(report, show_actions=True):
     """Helper function to display a report card"""
@@ -342,7 +442,6 @@ def display_report_card(report, show_actions=True):
                 )
             os.unlink(pdf_path)
 
-
 def edit_report_form(report):
     """Form for editing an existing report"""
     st.subheader(f"✏️ Editing Report for {report.get('student_name', 'Unknown Student')}")
@@ -442,21 +541,22 @@ def edit_report_form(report):
             }
             
             # Save the updated report
-            save_report(updated_report)
-            st.success("Report updated successfully!")
-            
-            # Update session state
-            st.session_state.current_report = updated_report
-            st.session_state.reports = load_previous_reports()
-            if "editing_report" in st.session_state:
-                del st.session_state.editing_report
-            st.rerun()
+            if update_report(updated_report):
+                st.success("Report updated successfully!")
+                
+                # Update session state
+                st.session_state.current_report = updated_report
+                st.session_state.reports = load_previous_reports()
+                if "editing_report" in st.session_state:
+                    del st.session_state.editing_report
+                st.rerun()
+            else:
+                st.error("Failed to update report in database")
         
         if cancel_edit:
             if "editing_report" in st.session_state:
                 del st.session_state.editing_report
             st.rerun()
-
 
 def main():
     st.set_page_config(
@@ -469,7 +569,7 @@ def main():
     # Custom CSS for Neon Purple Theme
     st.markdown(
         """
- <style>
+        <style>
         /* Main background with dark purple gradient */
         .stApp {
             background: linear-gradient(135deg, #0a0a1a 0%, #1a0a2a 100%);
@@ -722,35 +822,6 @@ def main():
         }
 
         .download-button {
-        color: #ffffff !important;
-        background-color: #9c27b0;
-        padding: 0.5rem 1rem;
-        border-radius: 6px;
-        text-decoration: none;
-        font-weight: bold;
-        border: none;
-        box-shadow: 0 0 10px rgba(156, 39, 176, 0.5);
-        transition: all 0.3s;
-        display: inline-block;
-        margin: 0.5rem 0;
-        text-shadow: 0 0 5px rgba(255, 255, 255, 0.3);
-        cursor: pointer;
-    }
-    
-    .download-button:hover {
-        background-color: #e100ff !important;
-        box-shadow: 0 0 15px rgba(225, 0, 255, 0.8) !important;
-        transform: translateY(-1px);
-    }
-    
-    .download-button:active {
-        transform: translateY(0);
-    }
-
-    # Replace the existing download button CSS with this:
-
-        /* Download buttons with consistent neon purple styling */
-        .download-button {
             color: #ffffff !important;
             background-color: #9c27b0;
             padding: 0.5rem 1rem;
@@ -775,7 +846,7 @@ def main():
         .download-button:active {
             transform: translateY(0);
         }
-        
+
         /* Make the Streamlit download button match our custom style */
         .stDownloadButton>button {
             color: #ffffff !important;
@@ -799,12 +870,11 @@ def main():
         .stDownloadButton>button:active {
             transform: translateY(0) !important;
         }
-    </style>
-   
+        </style>
         """,
         unsafe_allow_html=True,
     )
-  
+   
     st.title("📊 Report Card Generator")
     st.markdown(
         "<style>div[data-testid='stMarkdownContainer'] > p {color: #ffffff;}</style>", 
